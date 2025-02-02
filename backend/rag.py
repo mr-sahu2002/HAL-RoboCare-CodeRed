@@ -10,7 +10,9 @@ from typing import List, Optional, Any, Dict
 import google.generativeai as genai
 from pydantic import PrivateAttr
 from PyPDF2 import PdfReader
+from dotenv import load_dotenv
 
+load_dotenv()
 class GeminiLLM(LLM):
     """Custom LangChain LLM wrapper for Google's Gemini API"""
     
@@ -71,7 +73,7 @@ class RAGApplication:
         self.vector_store = None
         
         # Create custom prompt template
-        template = """You are a mental health assistant that provides supportive, evidence-based responses to users’ mental health concerns. Use the retrieved context from trusted mental health PDFs to answer questions accurately. If the retrieved documents do not contain relevant information, simply response from the llm model without rag.
+        template = """You are a mental health assistant that provides supportive, evidence-based responses to users’ mental health concerns. Use the retrieved context from trusted mental health PDFs to answer questions accurately. If the retrieved documents do not contain relevant information, simply response from the llm model without rag. make sure your response are concise and empathetic.
         
         Context: {context}
         
@@ -186,7 +188,7 @@ class RAGApplication:
 
 #################### run this file to ingest the new data ####################
 if __name__ == "__main__":
-    API_KEY = "AIzaSyBtGB9alPAyCJmTPXSLx3JP54tp-g2KIMk"  
+    API_KEY = os.get('gemini_api')  
 
     # Initialize the RAG application
     rag = RAGApplication(api_key=API_KEY)

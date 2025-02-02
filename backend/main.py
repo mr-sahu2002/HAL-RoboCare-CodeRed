@@ -5,11 +5,18 @@ from rag import RAGApplication
 from dotenv import load_dotenv
 import os
 
-
+# Load environment variables
 load_dotenv()
-# Define the request model
+
+# Define request models
 class QueryRequest(BaseModel):
     question: str
+
+class UserContext(BaseModel):
+    age: str
+    gender: str
+    goal: str
+    profession: str
 
 # Constants
 API_KEY = os.getenv("gemini_api")  
@@ -44,6 +51,24 @@ async def query_rag(request: QueryRequest):
     """Query endpoint for the RAG application."""
     try:
         answer = rag.query(request.question)
-        return {"answer":answer}
+        return {"answer": answer}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error processing query: {str(e)}")
+
+@app.post("/user-context/",
+         response_model=dict,
+         summary="Submit user context",
+         description="Submit user details like age, gender, goal, and profession")
+
+async def submit_user_context(context: UserContext):
+    """Endpoint to receive and process user context."""
+    try:
+        user_data = {
+            "age": context.age,
+            "gender": context.gender,
+            "goal": context.goal,
+            "profession": context.profession
+        }
+        return {"message": "User context received successfully", "data": user_data}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error processing user context: {str(e)}")

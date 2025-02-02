@@ -1,5 +1,5 @@
-import React, { useState } from "react"
-import { BotIcon as Robot, Mic, Send } from "lucide-react"
+import React, { useState, useRef } from "react"
+import { BotIcon as Robot, Mic, Send, Volume2, VolumeX } from "lucide-react"
 import SpeechRecognition, { useSpeechRecognition } from "react-speech-recognition"
 import axios from "axios"
 import "../style/chatbot.css"
@@ -17,6 +17,10 @@ export default function Chatbot() {
   const [isListening, setIsListening] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
   const [isProfileSubmitted, setIsProfileSubmitted] = useState(false)
+  const [isSpeaking, setIsSpeaking] = useState(false)
+  
+  const audioRef = useRef(null)
+  const currentAudioURL = useRef(null)
 
   const {
     transcript,
@@ -28,6 +32,15 @@ export default function Chatbot() {
   React.useEffect(() => {
     setMessage(transcript)
   }, [transcript])
+
+  // Cleanup audio URLs when component unmounts
+  React.useEffect(() => {
+    return () => {
+      if (currentAudioURL.current) {
+        URL.revokeObjectURL(currentAudioURL.current)
+      }
+    }
+  }, [])
 
   const handleInputChange = (e) => {
     const { name, value } = e.target
@@ -53,10 +66,22 @@ export default function Chatbot() {
 
   const queryBackend = async (question) => {
     try {
-      const response = await axios.post("http://localhost:8000/query/", {
+      // Get text response
+      const textResponse = await axios.post("http://localhost:8000/query/", {
         question: question
       })
-      return response.data
+
+      // Get audio response
+      const audioResponse = await axios.post("http://localhost:8000/query-with-tts/", {
+        question: question
+      }, {
+        responseType: 'blob'
+      })
+
+      return {
+        text: textResponse.data,
+        audio: audioResponse.data
+      }
     } catch (error) {
       console.error("Error querying backend:", error)
       throw error
@@ -80,13 +105,33 @@ export default function Chatbot() {
 
         const response = await queryBackend(userMessage)
 
+        // Clean up previous audio URL
+        if (currentAudioURL.current) {
+          URL.revokeObjectURL(currentAudioURL.current)
+        }
+
+        // Create new audio URL
+        const audioURL = URL.createObjectURL(response.audio)
+        currentAudioURL.current = audioURL
+
         setMessages((prev) => {
           const withoutLoading = prev.filter(msg => !msg.isLoading)
           return [
             ...withoutLoading,
-            { text: response.answer || response.toString(), isBot: true }
+            { 
+              text: response.text.answer || response.text.toString(), 
+              isBot: true,
+              audioURL: audioURL
+            }
           ]
         })
+
+        // Play audio
+        if (audioRef.current) {
+          audioRef.current.src = audioURL
+          audioRef.current.play()
+          setIsSpeaking(true)
+        }
       } catch (error) {
         setMessages((prev) => {
           const withoutLoading = prev.filter(msg => !msg.isLoading)
@@ -116,8 +161,27 @@ export default function Chatbot() {
     setIsListening(!isListening)
   }
 
+  const toggleAudio = (audioURL) => {
+    if (audioRef.current) {
+      if (audioRef.current.src === audioURL && !audioRef.current.paused) {
+        audioRef.current.pause()
+        setIsSpeaking(false)
+      } else {
+        audioRef.current.src = audioURL
+        audioRef.current.play()
+        setIsSpeaking(true)
+      }
+    }
+  }
+
   return (
     <div className="chatbot-container">
+      <audio 
+        ref={audioRef}
+        onEnded={() => setIsSpeaking(false)}
+        onError={() => setIsSpeaking(false)}
+      />
+      
       <div className="sidebar">
         <div className="logo">
           <Robot className="h-6 w-6" />
@@ -192,7 +256,21 @@ export default function Chatbot() {
               }`}
             >
               {msg.isBot && <Robot className="bot-icon" />}
-              <div className="message-bubble">{msg.text}</div>
+              <div className="message-bubble">
+                {msg.text}
+                {msg.audioURL && (
+                  <button
+                    onClick={() => toggleAudio(msg.audioURL)}
+                    className="audio-toggle-button"
+                  >
+                    {isSpeaking && audioRef.current?.src === msg.audioURL ? (
+                      <VolumeX className="h-4 w-4" />
+                    ) : (
+                      <Volume2 className="h-4 w-4" />
+                    )}
+                  </button>
+                )}
+              </div>
             </div>
           ))}
         </div>

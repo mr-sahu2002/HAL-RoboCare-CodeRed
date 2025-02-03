@@ -10,3 +10,15 @@ function App() {
 
 export default App
 
+
+//import Chatbot from "./page/chat"
+
+// function App() {
+//   return (
+//     <div className="app">
+//       <Chat />
+//     </div>
+//   )
+// }
+
+// export default App

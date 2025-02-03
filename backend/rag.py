@@ -73,7 +73,7 @@ class RAGApplication:
         self.vector_store = None
         
         # Create custom prompt template
-        template = """You are a mental health assistant that provides supportive, evidence-based responses to users’ mental health concerns. Use the retrieved context from trusted mental health PDFs to answer questions accurately. If the retrieved documents do not contain relevant information, simply response from the llm model without rag. make sure your response are concise and empathetic.
+        template = """You are an mental health ChatBot named Robo. You are designed to be a helpful assistant by being a good listner and a friend to your users. Make sure your responses are friendly, helpful, and empathic. You can provide information, answer questions from pdf or direct llm and offer advice in fewer than 100 words. You can also engage in casual conversation and provide emotional support. Remember to always prioritize the well-being and satisfaction of your users. if possible use the information from the pdf to answer the questions.
         
         Context: {context}
         
@@ -86,50 +86,35 @@ class RAGApplication:
             template=template,
         )
 
-    ## loading the pdf form the directory
+    ## loading the data form the directory
     def load_documents(self, directory: str):
         """
-        Load documents from all PDF files in the given directory
+        Load documents from all text files in the given directory
         
         Args:
-            directory: Path to the directory containing PDF files to load
+            directory: Path to the directory containing text files to load
         """
-        documents = []  
+        documents = []
         # Iterate through all files in the directory
         for file_name in os.listdir(directory):
             file_path = os.path.join(directory, file_name)
-            # Ensure only PDF files are processed
-            if os.path.isfile(file_path) and file_name.endswith(".pdf"):
+            # Ensure only text files are processed
+            if os.path.isfile(file_path) and file_name.endswith(".txt"):
                 try:
-                    # Create a PDF reader object
-                    pdf_reader = PdfReader(file_path)
-                    
-                    # Extract text from each page
-                    text = ""
-                    for page in pdf_reader.pages:
-                        text += page.extract_text() + "\n"
-                    
-                    # Skip if no text was extracted
-                    if not text.strip():
-                        print(f"Warning: No text could be extracted from {file_name}")
-                        continue
-                        
+                    with open(file_path, 'r', encoding='utf-8') as f:
+                        content = f.read()
                     # Wrap content in a Document object
-                    documents.append(Document(page_content=text, metadata={"source": file_name}))
-                    
-                except Exception as e:
-                    print(f"Error processing file {file_name}: {str(e)}")
+                    documents.append(Document(page_content=content, metadata={"source": file_name}))
+                except UnicodeDecodeError:
+                    print(f"Skipping file {file_name} due to encoding issues.")
         
-        if not documents:
-            print("No valid PDF documents were found in the directory.")
-            return
-            
         # Split documents into chunks
         texts = self.text_splitter.split_documents(documents)
         
         # Create vector store
         self.vector_store = FAISS.from_documents(texts, self.embeddings)
         print(f"Loaded {len(texts)} text chunks into the vector store")
+        
 
     ## creting the vector store        
     def save_vector_store(self, path: str):
@@ -188,7 +173,7 @@ class RAGApplication:
 
 #################### run this file to ingest the new data ####################
 if __name__ == "__main__":
-    API_KEY = os.get('gemini_api')  
+    API_KEY = os.getenv('gemini_api')  
 
     # Initialize the RAG application
     rag = RAGApplication(api_key=API_KEY)

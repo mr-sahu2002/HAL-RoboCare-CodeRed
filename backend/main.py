@@ -1,14 +1,15 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, JSONResponse
 from pydantic import BaseModel
-from rag import RAGApplication
-from kokoro import KPipeline
-import soundfile as sf
-import numpy as np
-import io
 from dotenv import load_dotenv
 import os
+import io
+import base64
+from rag import RAGApplication
+from PIL import Image
+from tts import generate_audio  
+import google.generativeai as genai
 
 # Load environment variables
 load_dotenv()
@@ -20,15 +21,12 @@ class QueryRequest(BaseModel):
 class UserContext(BaseModel):
     age: str
     gender: str
-    goal: str
-    profession: str
+    height: str
+    weight: str
 
-# Constants
+# Constants api and vector store path
 API_KEY = os.getenv("gemini_api")
-VECTOR_STORE_PATH = 'vectorDB'
-
-# Initialize TTS pipeline
-tts_pipeline = KPipeline(lang_code='a')
+VECTOR_STORE_PATH = "vectorDB"
 
 # Create FastAPI app
 app = FastAPI(
@@ -37,7 +35,7 @@ app = FastAPI(
     version="1.0.0"
 )
 
-# Enable CORS
+# Enable CORS for all domains
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -46,83 +44,187 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Initialize RAG
+# Initialize RAG and load vector store
 rag = RAGApplication(api_key=API_KEY)
 rag.load_vector_store(VECTOR_STORE_PATH, allow_dangerous_deserialization=True)
 
-def generate_audio(text):
-    """Generate audio from text using Kokoro TTS."""
-    audio_segments = []
-    generator = tts_pipeline(text, voice='af_heart', speed=1, split_pattern=r'\n+')
-    
-    for _, _, audio in generator:
-        audio_segments.append(audio)
-    
-    final_audio = np.concatenate(audio_segments)
-    return final_audio
+# Initialize user context and conversation history
+user_context = {}
+conversation_history = []
 
-def create_audio_response(audio_data):
-    """Create a streaming response for audio data."""
-    # Create in-memory buffer
-    audio_buffer = io.BytesIO()
-    
-    # Save audio to buffer
-    sf.write(audio_buffer, audio_data, 24000, format='wav')
-    
-    # Seek to beginning of buffer
-    audio_buffer.seek(0)
-    
-    return StreamingResponse(
-        audio_buffer,
-        media_type="audio/wav",
-        headers={
-            "Content-Disposition": "attachment; filename=response.wav"
-        }
-    )
-
-@app.post("/query-with-tts/",
-         summary="Query the RAG system with TTS response",
-         description="Submit a question and get both text and audio response")
-async def query_rag_with_tts(request: QueryRequest):
-    """Query endpoint that returns both text and audio response."""
-    try:
-        # Get text response from RAG
-        text_answer = rag.query(request.question)
-        
-        # Generate audio from text
-        audio_data = generate_audio(text_answer)
-        
-        # Create streaming response
-        return create_audio_response(audio_data)
-        
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error processing query: {str(e)}")
-
-@app.post("/query/",
-         response_model=dict,
-         summary="Query the RAG system",
-         description="Submit a question to the RAG system")
-async def query_rag(request: QueryRequest):
-    """Query endpoint for text-only response."""
-    try:
-        answer = rag.query(request.question)
-        return {"answer": answer}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error processing query: {str(e)}")
-
-@app.post("/user-context/",
-         response_model=dict,
-         summary="Submit user context",
-         description="Submit user details like age, gender, goal, and profession")
+# Define endpoints
+@app.post(
+    "/user-context/",
+    response_model=dict,
+    summary="Submit user context",
+    description="Submit user details like age, gender, height, and weight",
+)
 async def submit_user_context(context: UserContext):
     """Endpoint to receive and process user context."""
     try:
-        user_data = {
+        global user_context
+        user_context = {
             "age": context.age,
             "gender": context.gender,
-            "goal": context.goal,
-            "profession": context.profession
+            "height": context.height,
+            "weight": context.weight,
         }
-        return {"message": "User context received successfully", "data": user_data}
+        
+        # Add user context to conversation history
+        conversation_history.append({
+            "type": "context",
+            "data": user_context
+        })
+        
+        return {
+            "message": "User context received successfully", 
+            "data": user_context
+        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error processing user context: {str(e)}")
+    
+@app.post(
+    "/upload-image/",
+    summary="Upload and analyze an image",
+    description="Upload an image for analysis and add to conversation history"
+)
+async def upload_image(image: UploadFile = File(...)):
+    """
+    Endpoint to upload and analyze an image
+    """
+    try:
+        # Read the uploaded image file
+        contents = await image.read()
+        
+        # Open image using Pillow
+        image_pil = Image.open(io.BytesIO(contents))
+        
+        # Convert image to base64 for storage and potential frontend display
+        buffered = io.BytesIO()
+        image_pil.save(buffered, format="PNG")
+        img_base64 = base64.b64encode(buffered.getvalue()).decode('utf-8')
+        
+        # Use Gemini Vision for image analysis
+        genai.configure(api_key=API_KEY)
+        model = genai.GenerativeModel('gemini-2.0-flash')
+        
+        # Analyze the image
+        response = model.generate_content([
+            "Describe this image in detail. What objects, scenes, or key elements do you observe? and if any skin infection is present in the image, please describe it.", 
+            image_pil
+        ])
+        
+        # Sanitize the image analysis
+        image_analysis = response.text.strip()
+        
+        # Add to conversation history
+        conversation_history.append({
+            "type": "image",
+            "base64": img_base64,
+            "analysis": image_analysis
+        })
+        
+        # Return analysis to frontend
+        return {
+            "message": "Image uploaded successfully", 
+            "analysis": image_analysis,
+            "base64": img_base64
+        }
+    
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error processing image: {str(e)}")
+    
+@app.post(
+    "/query/",
+    summary="Query the RAG system with optional TTS response",
+    description="Submit a question and get text and optional audio response",
+)
+async def query_rag(request: QueryRequest):
+    """
+    Handle chat queries with context awareness and TTS
+    """
+    try:
+        # Build context-aware prompt
+        context_prompt = build_context_prompt(
+            user_context,
+            conversation_history,
+            request.question
+        )
+        
+        # Get response from RAG system
+        text_answer = rag.query(context_prompt)
+        
+        # Store in conversation history
+        conversation_history.append({
+            "type": "text",
+            "question": request.question,
+            "answer": text_answer
+        })
+        
+        # Generate audio from text
+        audio_buffer = generate_audio(text_answer)
+        
+        # Convert audio buffer to base64
+        import base64
+        audio_base64 = base64.b64encode(audio_buffer.getvalue()).decode('utf-8')
+        
+        # Return both text and audio in JSON response
+        return JSONResponse({
+            "answer": text_answer,
+            "audio": audio_base64
+        })
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error processing query: {str(e)}")
+
+# For context-aware prompt
+def build_context_prompt(context, history, question):
+    """
+    Build a context-aware prompt combining user context, conversation history,
+    and the current question
+    """
+    prompt_parts = []
+    
+    # Add user context if available
+    if context:
+        prompt_parts.append(
+            f"User Context: Age: {context.get('age')}, "
+            f"Gender: {context.get('gender')}, "
+            f"Height: {context.get('height')}cm, "
+            f"Weight: {context.get('weight')}kg"
+        )
+    
+    # Add relevant conversation history
+    if history:
+        last_exchanges = history[-3:]  # Get last 3 exchanges for context
+        for exchange in last_exchanges:
+            if exchange["type"] == "text":
+                prompt_parts.append(f"Previous Q: {exchange['question']}")
+                prompt_parts.append(f"Previous A: {exchange['answer']}")
+            elif exchange["type"] == "image":
+                prompt_parts.append(f"Previous Image Analysis: {exchange['analysis']}")
+    
+    # Add current question
+    prompt_parts.append(f"Current Question: {question}")
+    
+    # Combine all parts
+    return "\n".join(prompt_parts)
+
+def create_audio_response(audio_buffer, headers=None):
+    """
+    Create a streaming response for audio data with optional headers
+    """
+    def iterfile():
+        yield audio_buffer
+
+    response = StreamingResponse(
+        iterfile(),
+        media_type="audio/mp3",
+        headers=headers or {}
+    )
+    
+    return response
+
+
+
+# gemini-2.0-flash-lite-preview-02-05

@@ -17,10 +17,10 @@ class GeminiLLM(LLM):
     """Custom LangChain LLM wrapper for Google's Gemini API"""
     
     api_key: str
-    model_name: str = "gemini-1.5-flash"
+    model_name: str = "gemini-2.0-flash"
     _model: Any = PrivateAttr()
     
-    def __init__(self, api_key: str, model_name: str = "gemini-1.5-flash", **kwargs):
+    def __init__(self, api_key: str, model_name: str = "gemini-2.0-flash", **kwargs):
         """Initialize the model"""
         super().__init__(api_key=api_key, model_name=model_name, **kwargs)
         genai.configure(api_key=api_key)
@@ -73,8 +73,17 @@ class RAGApplication:
         self.vector_store = None
         
         # Create custom prompt template
-        template = """You are an mental health ChatBot named Robo. You are designed to be a helpful assistant by being a good listner and a friend to your users. Make sure your responses are friendly, helpful, and empathic. You can provide information, answer questions from pdf or direct llm and offer advice in fewer than 100 words. You can also engage in casual conversation and provide emotional support. Remember to always prioritize the well-being and satisfaction of your users. if possible use the information from the pdf to answer the questions.
-        
+        template = """
+        You are a friendly AI health assistant that engages users in conversation, asks relevant questions, analyzes symptoms, provides remedies, and offers multilingual, evidence-based guidance before recommending a doctor if necessary. Supports image-based analysis.
+
+        Conversation Style:
+        Short and simple responses
+        Ask follow-up questions before conclusions
+        Provide home remedies first, then medical advice
+        Avoid complex medical jargon
+        Support multiple languages and image-based analysis
+        avoid any format like bold
+
         Context: {context}
         
         Question: {question}

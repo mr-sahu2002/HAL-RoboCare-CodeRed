@@ -8,7 +8,8 @@ import io
 import base64
 from rag import RAGApplication
 from PIL import Image
-from tts import generate_audio  
+from gtts import gTTS
+from langdetect import detect
 import google.generativeai as genai
 
 # Load environment variables
@@ -48,6 +49,14 @@ app.add_middleware(
 rag = RAGApplication(api_key=API_KEY)
 rag.load_vector_store(VECTOR_STORE_PATH, allow_dangerous_deserialization=True)
 
+LANGUAGE_MAP = {
+    "en": "en",    # English
+    "hi": "hi",    # Hindi
+    "ta": "ta",    # Tamil
+    "te": "te",    # Telugu
+    "kn": "kn",    # Kannada
+    "ml": "ml",    # Malayalam
+}
 # Initialize user context and conversation history
 user_context = {}
 conversation_history = []
@@ -133,7 +142,48 @@ async def upload_image(image: UploadFile = File(...)):
     
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error processing image: {str(e)}")
+
+
+def detect_language(text: str) -> str:
+    """
+    Detect the language of input text and map it to supported TTS language code.
+    Falls back to English if language is not supported.
+    """
+    try:
+        detected = detect(text)
+        return LANGUAGE_MAP.get(detected, "en")
+    except:
+        return "en"  # Default to English if detection fails
+
+def generate_audio(text: str, language: str = None) -> io.BytesIO:
+    """
+    Generate audio from text using automatically detected language or specified language.
+    Falls back to English if the detected/specified language is not supported.
+    """
+    try:
+        # If language not specified, detect it from text
+        if not language:
+            lang_code = detect_language(text)
+        else:
+            lang_code = LANGUAGE_MAP.get(language.lower(), "en")
+        
+        # Create gTTS object
+        tts = gTTS(text=text, lang=lang_code, slow=False)
+        
+        # Save to an in-memory buffer
+        audio_buffer = io.BytesIO()
+        tts.save("temp.mp3")
+        with open("temp.mp3", "rb") as f:
+            audio_buffer.write(f.read())
+        
+        # Prepare buffer for streaming
+        audio_buffer.seek(0)
+        return audio_buffer
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"TTS generation error: {str(e)}")
     
+
 @app.post(
     "/query/",
     summary="Query the RAG system with optional TTS response",
@@ -141,7 +191,7 @@ async def upload_image(image: UploadFile = File(...)):
 )
 async def query_rag(request: QueryRequest):
     """
-    Handle chat queries with context awareness and TTS
+    Handle chat queries with automatic language detection and TTS
     """
     try:
         # Build context-aware prompt
@@ -154,26 +204,30 @@ async def query_rag(request: QueryRequest):
         # Get response from RAG system
         text_answer = rag.query(context_prompt)
         
+        # Detect language from the question
+        detected_language = detect_language(request.question)
+        
+        # Generate audio with detected language
+        audio_buffer = generate_audio(text_answer, detected_language)
+        
+        # Convert audio buffer to base64
+        audio_base64 = base64.b64encode(audio_buffer.getvalue()).decode('utf-8')
+        
         # Store in conversation history
         conversation_history.append({
             "type": "text",
             "question": request.question,
-            "answer": text_answer
+            "answer": text_answer,
+            "detected_language": detected_language
         })
-        
-        # Generate audio from text
-        audio_buffer = generate_audio(text_answer)
-        
-        # Convert audio buffer to base64
-        import base64
-        audio_base64 = base64.b64encode(audio_buffer.getvalue()).decode('utf-8')
         
         # Return both text and audio in JSON response
         return JSONResponse({
             "answer": text_answer,
-            "audio": audio_base64
+            "audio": audio_base64,
+            "detected_language": detected_language
         })
-
+        
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error processing query: {str(e)}")
 
